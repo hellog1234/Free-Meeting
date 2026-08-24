@@ -64,6 +64,7 @@ export function useWebRTC({
   const [localAudioLevel, setLocalAudioLevel] = useState<number>(0);
   const [mediaError, setMediaError] = useState<string | null>(null);
   const [audioAutoplayBlocked, setAudioAutoplayBlocked] = useState<boolean>(false);
+  const [mediaReady, setMediaReady] = useState<boolean>(false);
 
   // Map of remote peers: peerId -> RemotePeer
   const [remotePeers, setRemotePeers] = useState<Record<string, RemotePeer>>({});
@@ -162,77 +163,70 @@ export function useWebRTC({
       },
     }));
 
-    // Ensure audio & video transceivers exist with sendrecv direction to guarantee bidirectional SDP negotiation
-    let audioTransceiver = pc.getTransceivers().find(t => t.receiver.track.kind === 'audio');
-    if (!audioTransceiver) {
-      try {
-        audioTransceiver = pc.addTransceiver('audio', { direction: 'sendrecv' });
-      } catch (e) {
-        console.warn('[WEBRTC] addTransceiver audio warning:', e);
-      }
-    }
-
-    let videoTransceiver = pc.getTransceivers().find(t => t.receiver.track.kind === 'video');
-    if (!videoTransceiver) {
-      try {
-        videoTransceiver = pc.addTransceiver('video', { direction: 'sendrecv' });
-      } catch (e) {
-        console.warn('[WEBRTC] addTransceiver video warning:', e);
-      }
-    }
-
-    // 1. Attach Local Audio Track (Microphone)
-    if (localStreamRef.current && localStreamRef.current.getAudioTracks().length > 0) {
-      const audioTrack = localStreamRef.current.getAudioTracks()[0];
-      if (audioTrack) {
-        console.log(`[WEBRTC] adding/replacing audio track to peer connection for ${remotePeerId}:`, audioTrack.id, audioTrack.readyState);
-        if (audioTransceiver && audioTransceiver.sender) {
-          audioTransceiver.sender.replaceTrack(audioTrack).catch(err => {
-            console.warn('[WEBRTC] replaceTrack audio warning:', err);
-          });
-        } else {
-          try {
-            pc.addTrack(audioTrack, localStreamRef.current);
-          } catch (e) {
-            console.warn('[WEBRTC] addTrack audio warning:', e);
+    // 1. Attach Local Tracks to Peer Connection
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach(track => {
+        try {
+          if (track.kind === 'video' && screenStreamRef.current && screenStreamRef.current.getVideoTracks().length > 0) {
+            const screenTrack = screenStreamRef.current.getVideoTracks()[0];
+            console.log(`[WEBRTC] Adding screen video track to PC for ${remotePeerId}`);
+            pc.addTrack(screenTrack, screenStreamRef.current);
+          } else {
+            console.log(`[WEBRTC] Adding ${track.kind} track to PC for ${remotePeerId}: id=${track.id} enabled=${track.enabled}`);
+            pc.addTrack(track, localStreamRef.current!);
           }
+        } catch (err) {
+          console.warn(`[WEBRTC] addTrack error for ${remotePeerId}:`, err);
         }
-      }
+      });
     }
 
-    // 2. Attach Local Video Track (Screen share track if active, otherwise camera track)
-    if (screenStreamRef.current && screenStreamRef.current.getVideoTracks().length > 0) {
-      const screenTrack = screenStreamRef.current.getVideoTracks()[0];
-      console.log(`[WEBRTC] adding/replacing screen video track to peer connection for ${remotePeerId}`);
-      if (videoTransceiver && videoTransceiver.sender) {
-        videoTransceiver.sender.replaceTrack(screenTrack).catch(() => {});
-      } else {
-        try {
-          pc.addTrack(screenTrack, screenStreamRef.current);
-        } catch (e) {}
-      }
-    } else if (localStreamRef.current && localStreamRef.current.getVideoTracks().length > 0) {
-      const videoTrack = localStreamRef.current.getVideoTracks()[0];
-      console.log(`[WEBRTC] adding/replacing camera video track to peer connection for ${remotePeerId}`);
-      if (videoTransceiver && videoTransceiver.sender) {
-        videoTransceiver.sender.replaceTrack(videoTrack).catch(() => {});
-      } else {
-        try {
-          pc.addTrack(videoTrack, localStreamRef.current);
-        } catch (e) {}
-      }
+    // 2. Ensure Audio and Video Transceivers exist for bidirectional streaming
+    const hasAudioSender = pc.getSenders().some(s => s.track?.kind === 'audio' || (s as any).kind === 'audio');
+    if (!hasAudioSender) {
+      try {
+        console.log(`[WEBRTC] Adding audio transceiver (sendrecv) for ${remotePeerId}`);
+        pc.addTransceiver('audio', { direction: 'sendrecv' });
+      } catch (e) {}
     }
+
+    const hasVideoSender = pc.getSenders().some(s => s.track?.kind === 'video' || (s as any).kind === 'video');
+    if (!hasVideoSender) {
+      try {
+        console.log(`[WEBRTC] Adding video transceiver (sendrecv) for ${remotePeerId}`);
+        pc.addTransceiver('video', { direction: 'sendrecv' });
+      } catch (e) {}
+    }
+
+    // Log audio sender exists and video sender exists
+    const audioSender = pc.getSenders().find(s => s.track?.kind === 'audio' || (s as any).kind === 'audio');
+    const videoSender = pc.getSenders().find(s => s.track?.kind === 'video' || (s as any).kind === 'video');
+    console.log(`[WEBRTC] audio sender exists: ${!!audioSender}`);
+    console.log(`[WEBRTC] video sender exists: ${!!videoSender}`);
 
     // 3. Handle incoming remote media tracks
     pc.ontrack = (event) => {
-      console.log(`[WEBRTC] ontrack received: kind=${event.track.kind} id=${event.track.id} from=${remotePeerId}`);
-      const stream = remoteMediaStreams.current.get(remotePeerId) || new MediaStream();
+      console.log(`[WEBRTC] remote ${event.track.kind} track received: id=${event.track.id} readyState=${event.track.readyState} from=${remotePeerId}`);
+      
+      let stream = remoteMediaStreams.current.get(remotePeerId);
+      if (!stream) {
+        stream = new MediaStream();
+      }
       
       // Add track if not already present
       if (!stream.getTracks().some(t => t.id === event.track.id)) {
         stream.addTrack(event.track);
       }
-      remoteMediaStreams.current.set(remotePeerId, stream);
+      
+      // Clone tracks into new MediaStream instance so React state updates trigger re-render
+      const updatedStream = new MediaStream(stream.getTracks());
+      remoteMediaStreams.current.set(remotePeerId, updatedStream);
+
+      updateRemotePeer(remotePeerId, {
+        stream: updatedStream,
+        videoEnabled: updatedStream.getVideoTracks().some(t => t.enabled && t.readyState === 'live'),
+        audioEnabled: updatedStream.getAudioTracks().some(t => t.enabled && t.readyState === 'live'),
+      });
 
       // Listen to track mute/unmute events
       event.track.onmute = () => {
@@ -245,8 +239,6 @@ export function useWebRTC({
         if (event.track.kind === 'video') updateRemotePeer(remotePeerId, { videoEnabled: true });
         if (event.track.kind === 'audio') updateRemotePeer(remotePeerId, { audioEnabled: true });
       };
-
-      updateRemotePeer(remotePeerId, { stream });
     };
 
     // 4. Handle local ICE candidates
@@ -280,7 +272,7 @@ export function useWebRTC({
     // 6. Handle Peer Connection State Changes
     pc.onconnectionstatechange = () => {
       const state = pc.connectionState;
-      console.log(`[WEBRTC] Connection state for ${remotePeerId}: ${state}`);
+      console.log(`[WEBRTC] connection state: ${remotePeerId} -> ${state}`);
       updateRemotePeer(remotePeerId, { connectionState: state });
 
       if (state === 'failed') {
@@ -307,66 +299,57 @@ export function useWebRTC({
     }
   }, []);
 
-  // 1. Initialize Real Media Stream (Camera & Mic)
+  // 1. Initialize Real Media Stream (Camera & Mic in ONE MediaStream)
   useEffect(() => {
     let active = true;
 
     const startLocalMedia = async () => {
-      if (!initialVideo && !initialAudio) {
-        console.log('[MOBILE MEDIA] Joined with camera and mic disabled');
-        setIsCameraOn(false);
-        setIsMicOn(false);
-        setLocalStream(null);
-        return;
-      }
+      // Temporary mobile debug logs
+      console.log('[MOBILE MEDIA] isSecureContext:', typeof window !== 'undefined' ? window.isSecureContext : 'unknown');
+      console.log('[MOBILE MEDIA] userAgent:', typeof navigator !== 'undefined' ? navigator.userAgent : 'unknown');
+      console.log('[MOBILE MEDIA] getUserMedia available:', typeof navigator?.mediaDevices?.getUserMedia === 'function');
+      console.log('[MOBILE MEDIA] getDisplayMedia available:', typeof navigator?.mediaDevices?.getDisplayMedia === 'function');
+
+      console.log('[MIC] permission request');
 
       try {
         setMediaError(null);
-        console.log(`[MOBILE MEDIA] Requesting getUserMedia (audio: ${initialAudio}, video: ${initialVideo})`);
-
         let stream: MediaStream | null = null;
 
-        // Primary Attempt: Request single MediaStream containing requested audio and video tracks
+        // Unified MediaStream Request: Request BOTH audio and video in ONE call if video enabled, or audio if video disabled
         const primaryConstraints: MediaStreamConstraints = {
+          audio: selectedAudioDeviceId 
+            ? { deviceId: { exact: selectedAudioDeviceId } } 
+            : { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
           video: initialVideo ? (
             selectedVideoDeviceId 
               ? { deviceId: { exact: selectedVideoDeviceId } } 
               : { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: { ideal: cameraFacingMode } }
-          ) : false,
-          audio: initialAudio ? (
-            selectedAudioDeviceId 
-              ? { deviceId: { exact: selectedAudioDeviceId } } 
-              : { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
           ) : false,
         };
 
         try {
           stream = await navigator.mediaDevices.getUserMedia(primaryConstraints);
         } catch (primaryErr) {
-          console.warn('[MOBILE MEDIA] Primary constraints failed, attempting relaxed standard constraints:', primaryErr);
+          console.warn('[MOBILE MEDIA] Primary constraints failed, attempting basic fallback:', primaryErr);
           try {
             stream = await navigator.mediaDevices.getUserMedia({
+              audio: true,
               video: initialVideo ? { facingMode: { ideal: cameraFacingMode } } : false,
-              audio: initialAudio ? true : false,
             });
           } catch (basicErr: any) {
-            console.warn('[MOBILE MEDIA] Combined media failed, attempting separate track fallbacks:', basicErr);
-            if (initialVideo && initialAudio) {
-              try {
-                // Try audio first
-                stream = await navigator.mediaDevices.getUserMedia({ video: false, audio: true });
-                setIsCameraOn(false);
-              } catch (audioErr) {
-                try {
-                  // Try video only
-                  stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-                  setIsMicOn(false);
-                } catch (videoErr) {
-                  throw basicErr;
-                }
+            console.warn('[MOBILE MEDIA] Audio+Video failed, attempting audio-only fallback:', basicErr);
+            try {
+              stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+              setIsCameraOn(false);
+            } catch (audioOnlyErr) {
+              if (initialVideo) {
+                console.warn('[MOBILE MEDIA] Audio-only failed, attempting video-only fallback:', audioOnlyErr);
+                stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: true });
+                setIsMicOn(false);
+              } else {
+                throw audioOnlyErr;
               }
-            } else {
-              throw basicErr;
             }
           }
         }
@@ -376,15 +359,16 @@ export function useWebRTC({
           return;
         }
 
+        console.log('[MIC] stream created');
         const audioTracks = stream.getAudioTracks();
         const videoTracks = stream.getVideoTracks();
 
-        console.log(`[MOBILE MEDIA] stream acquired: audio=${audioTracks.length} video=${videoTracks.length}`);
-
+        console.log(`[MIC] audio track count: ${audioTracks.length}`);
         if (audioTracks.length > 0) {
           const audioTrack = audioTracks[0];
           audioTrack.enabled = initialAudio;
-          console.log(`[MIC] track live: ${audioTrack.readyState === 'live'} enabled: ${audioTrack.enabled} id: ${audioTrack.id}`);
+          console.log(`[MIC] audio track readyState: ${audioTrack.readyState}`);
+          console.log(`[MIC] audio track enabled: ${audioTrack.enabled}`);
         }
 
         if (videoTracks.length > 0) {
@@ -395,40 +379,7 @@ export function useWebRTC({
         setLocalStream(stream);
         setIsCameraOn(initialVideo && videoTracks.length > 0);
         setIsMicOn(initialAudio && audioTracks.length > 0);
-
-        // Sync tracks to all active RTCPeerConnections
-        const currentAudio = audioTracks[0];
-        const currentVideo = videoTracks[0];
-
-        for (const [pId, pc] of peerConnections.current) {
-          try {
-            let audioTransceiver = pc.getTransceivers().find(t => t.receiver.track.kind === 'audio');
-            if (currentAudio) {
-              if (audioTransceiver && audioTransceiver.sender) {
-                audioTransceiver.direction = 'sendrecv';
-                audioTransceiver.sender.replaceTrack(currentAudio).catch(err => {
-                  console.warn(`[WEBRTC] replaceTrack audio error for ${pId}:`, err);
-                });
-              } else {
-                pc.addTrack(currentAudio, stream);
-              }
-            }
-
-            let videoTransceiver = pc.getTransceivers().find(t => t.receiver.track.kind === 'video');
-            if (currentVideo && !screenStreamRef.current) {
-              if (videoTransceiver && videoTransceiver.sender) {
-                videoTransceiver.direction = 'sendrecv';
-                videoTransceiver.sender.replaceTrack(currentVideo).catch(err => {
-                  console.warn(`[WEBRTC] replaceTrack video error for ${pId}:`, err);
-                });
-              } else {
-                pc.addTrack(currentVideo, stream);
-              }
-            }
-          } catch (pcErr) {
-            console.warn(`[WEBRTC] Error syncing local media tracks to peer connection ${pId}:`, pcErr);
-          }
-        }
+        setMediaReady(true);
 
         // Local Microphone Audio Analyser for volume level feedback
         if (audioTracks.length > 0) {
@@ -473,6 +424,7 @@ export function useWebRTC({
           }
           setIsCameraOn(false);
           setIsMicOn(false);
+          setMediaReady(true);
         }
       }
     };
@@ -582,9 +534,9 @@ export function useWebRTC({
     };
   }, [meetingId, myPeerId, isMicOn]);
 
-  // 3. Listen to all participants to initiate WebRTC offers (Deterministic Initiator)
+  // 3. Listen to all participants to initiate WebRTC offers once media is ready
   useEffect(() => {
-    if (!meetingId || !myPeerId) return;
+    if (!meetingId || !myPeerId || !mediaReady) return;
 
     const participantsColRef = collection(db, 'meetings', meetingId, 'participants');
     const unsubParticipants = onSnapshot(participantsColRef, async (snapshot) => {
@@ -648,7 +600,7 @@ export function useWebRTC({
       unsubParticipants();
       unsubParticipantsRef.current = null;
     };
-  }, [meetingId, myPeerId, createPeerConnection, sendSignal, updateRemotePeer]);
+  }, [meetingId, myPeerId, mediaReady, createPeerConnection, sendSignal, updateRemotePeer]);
 
   // 4. Listen to incoming WebRTC signals
   useEffect(() => {
@@ -679,6 +631,21 @@ export function useWebRTC({
               pc = createPeerConnection(senderId, signalData.senderName || 'Participant', true);
             }
 
+            // Guarantee local tracks are attached before answering
+            if (localStreamRef.current) {
+              const currentSenders = pc.getSenders();
+              localStreamRef.current.getTracks().forEach(track => {
+                const s = currentSenders.find(sender => sender.track?.kind === track.kind || (sender as any).kind === track.kind);
+                if (s) {
+                  s.replaceTrack(track).catch(() => {});
+                } else {
+                  try {
+                    pc.addTrack(track, localStreamRef.current!);
+                  } catch (e) {}
+                }
+              });
+            }
+
             const offerDesc = new RTCSessionDescription({ type: 'offer', sdp: payload.sdp });
             await pc.setRemoteDescription(offerDesc);
             await flushPendingCandidates(senderId, pc);
@@ -690,7 +657,7 @@ export function useWebRTC({
           } else if (type === 'answer') {
             console.log(`[WEBRTC] Received answer from ${senderId}`);
             const pc = peerConnections.current.get(senderId);
-            if (pc && pc.signalingState !== 'stable') {
+            if (pc && (pc.signalingState === 'have-local-offer' || pc.signalingState !== 'stable')) {
               const answerDesc = new RTCSessionDescription({ type: 'answer', sdp: payload.sdp });
               await pc.setRemoteDescription(answerDesc);
               await flushPendingCandidates(senderId, pc);
@@ -699,7 +666,11 @@ export function useWebRTC({
             const pc = peerConnections.current.get(senderId);
             if (payload) {
               if (pc && pc.remoteDescription && pc.remoteDescription.type) {
-                await pc.addIceCandidate(new RTCIceCandidate(payload));
+                try {
+                  await pc.addIceCandidate(new RTCIceCandidate(payload));
+                } catch (e) {
+                  console.warn(`[WEBRTC] addIceCandidate error from ${senderId}:`, e);
+                }
               } else {
                 const list = pendingIceCandidates.current.get(senderId) || [];
                 list.push(payload);
@@ -757,9 +728,9 @@ export function useWebRTC({
 
         for (const [, pc] of peerConnections.current) {
           try {
-            const videoTransceiver = pc.getTransceivers().find(t => t.receiver.track.kind === 'video');
-            if (videoTransceiver && videoTransceiver.sender) {
-              videoTransceiver.sender.replaceTrack(newVideoTrack).catch(() => {});
+            const videoSender = pc.getSenders().find(s => s.track?.kind === 'video' || (s as any).kind === 'video');
+            if (videoSender) {
+              videoSender.replaceTrack(newVideoTrack).catch(() => {});
             } else {
               pc.addTrack(newVideoTrack, stream || newStream);
             }
@@ -811,9 +782,9 @@ export function useWebRTC({
 
       peerConnections.current.forEach(pc => {
         try {
-          const videoTransceiver = pc.getTransceivers().find(t => t.receiver.track.kind === 'video');
-          if (videoTransceiver && videoTransceiver.sender) {
-            videoTransceiver.sender.replaceTrack(newVideoTrack).catch(() => {});
+          const videoSender = pc.getSenders().find(s => s.track?.kind === 'video' || (s as any).kind === 'video');
+          if (videoSender) {
+            videoSender.replaceTrack(newVideoTrack).catch(() => {});
           } else {
             pc.addTrack(newVideoTrack, localStreamRef.current!);
           }
@@ -835,7 +806,7 @@ export function useWebRTC({
       stream.getAudioTracks().forEach(track => {
         track.enabled = nextState;
       });
-      console.log(`[MIC] toggleMic nextState=${nextState} track id: ${stream.getAudioTracks()[0].id}`);
+      console.log(`[MIC] toggleMic nextState=${nextState} track id: ${stream.getAudioTracks()[0].id} enabled: ${nextState}`);
       setIsMicOn(nextState);
       if (nextState) setMediaError(null);
 
@@ -900,9 +871,9 @@ export function useWebRTC({
         for (const [pId, pc] of peerConnections.current) {
           try {
             console.log(`[WEBRTC] adding audio track to peer connection for ${pId}`);
-            const audioTransceiver = pc.getTransceivers().find(t => t.receiver.track.kind === 'audio');
-            if (audioTransceiver && audioTransceiver.sender) {
-              audioTransceiver.sender.replaceTrack(newAudioTrack).catch(err => {
+            const audioSender = pc.getSenders().find(s => s.track?.kind === 'audio' || (s as any).kind === 'audio');
+            if (audioSender) {
+              audioSender.replaceTrack(newAudioTrack).catch(err => {
                 console.warn('[WEBRTC] replaceTrack mic error:', err);
               });
             } else {
@@ -947,9 +918,9 @@ export function useWebRTC({
     console.log('[SCREEN] restoring camera video track:', cameraTrack ? cameraTrack.id : 'null');
     for (const [pId, pc] of peerConnections.current) {
       try {
-        const videoTransceiver = pc.getTransceivers().find(t => t.receiver.track.kind === 'video');
-        if (videoTransceiver && videoTransceiver.sender) {
-          await videoTransceiver.sender.replaceTrack(cameraTrack).catch(err => {
+        const videoSender = pc.getSenders().find(s => s.track?.kind === 'video' || (s as any).kind === 'video');
+        if (videoSender) {
+          await videoSender.replaceTrack(cameraTrack).catch(err => {
             console.warn(`[SCREEN] Error restoring camera track on PC ${pId}:`, err);
           });
         }
@@ -961,8 +932,10 @@ export function useWebRTC({
 
   // Toggle Screen Share using standard getDisplayMedia (Native user gesture)
   const toggleScreenShare = useCallback(async () => {
-    console.log('[SCREEN] toggleScreenShare button clicked');
-    console.log('[SCREEN] secure context:', typeof window !== 'undefined' ? window.isSecureContext : 'unknown');
+    console.log('[SCREEN] getDisplayMedia called');
+    console.log('[MOBILE MEDIA] isSecureContext:', typeof window !== 'undefined' ? window.isSecureContext : 'unknown');
+    console.log('[MOBILE MEDIA] userAgent:', typeof navigator !== 'undefined' ? navigator.userAgent : 'unknown');
+    console.log('[MOBILE MEDIA] getDisplayMedia available:', typeof navigator?.mediaDevices?.getDisplayMedia === 'function');
 
     if (isScreenSharing) {
       await stopScreenShare();
@@ -973,18 +946,18 @@ export function useWebRTC({
 
     // 1. Secure Context Check
     if (typeof window !== 'undefined' && window.isSecureContext === false) {
-      console.error('[SCREEN] Insecure context detected (not HTTPS).');
-      setMediaError('Screen sharing requires HTTPS or secure context.');
+      const err = 'Screen sharing requires HTTPS or secure context.';
+      console.error('[SCREEN] screen sharing error message:', err);
+      setMediaError(err);
       return;
     }
 
     // 2. Real capability check without User-Agent blocking
     const canScreenShare = !!(navigator.mediaDevices && typeof navigator.mediaDevices.getDisplayMedia === 'function');
-    console.log('[SCREEN] getDisplayMedia available:', canScreenShare);
-
     if (!canScreenShare) {
-      console.warn('[SCREEN] getDisplayMedia is not available in this mobile browser.');
-      setMediaError('Screen sharing is not supported by this mobile browser.');
+      const err = 'Screen sharing is not supported by this mobile browser.';
+      console.warn('[SCREEN] screen sharing error message:', err);
+      setMediaError(err);
       return;
     }
 
@@ -1007,7 +980,8 @@ export function useWebRTC({
 
       console.log('[SCREEN] capture granted');
       const screenVideoTrack = displayStream.getVideoTracks()[0];
-      console.log(`[SCREEN] screen video track: ${screenVideoTrack?.label} live=${screenVideoTrack?.readyState === 'live'}`);
+      console.log(`[SCREEN] screen track received: label=${screenVideoTrack?.label}`);
+      console.log(`[SCREEN] screen track readyState: ${screenVideoTrack?.readyState}`);
 
       if (!screenVideoTrack || screenVideoTrack.readyState !== 'live') {
         throw new Error('Screen capture track is not active.');
@@ -1029,9 +1003,10 @@ export function useWebRTC({
       // Replace ONLY video sender on every RTCPeerConnection — microphone remains untouched
       for (const [pId, pc] of peerConnections.current) {
         try {
-          const videoTransceiver = pc.getTransceivers().find(t => t.receiver.track.kind === 'video');
-          if (videoTransceiver && videoTransceiver.sender) {
-            await videoTransceiver.sender.replaceTrack(screenVideoTrack).catch(err => {
+          const videoSender = pc.getSenders().find(s => s.track?.kind === 'video' || (s as any).kind === 'video');
+          console.log(`[WEBRTC] video sender exists for ${pId}: ${!!videoSender}`);
+          if (videoSender) {
+            await videoSender.replaceTrack(screenVideoTrack).catch(err => {
               console.warn(`[SCREEN] Error replacing video track for ${pId}:`, err);
             });
           } else {
@@ -1044,11 +1019,12 @@ export function useWebRTC({
 
       // Handle when user stops sharing via native browser bar
       screenVideoTrack.onended = () => {
-        console.log('[SCREEN] Screen share ended via browser controls.');
+        console.log('[SCREEN] screen track ended via browser UI');
         stopScreenShare();
       };
     } catch (err: any) {
-      console.error('[SCREEN] error:', err?.name, err?.message);
+      console.error('[SCREEN] screen sharing error name:', err?.name);
+      console.error('[SCREEN] screen sharing error message:', err?.message);
       const name = err?.name || '';
       const msg = String(err?.message || '').toLowerCase();
 

@@ -111,12 +111,22 @@ export const MeetingRoomPage: React.FC<MeetingRoomPageProps> = ({ meetingId }) =
         const stored = sessionStorage.getItem(`freemeet_pref_${meetingId}`);
         if (stored) return JSON.parse(stored);
       } catch (e) {}
+      // Fallback check for any freemeet_pref in session storage
+      try {
+        for (let i = 0; i < sessionStorage.length; i++) {
+          const key = sessionStorage.key(i);
+          if (key && key.startsWith('freemeet_pref_')) {
+            const val = sessionStorage.getItem(key);
+            if (val) return JSON.parse(val);
+          }
+        }
+      } catch (e) {}
     }
     return {
       displayName: user?.name || (user?.email ? user.email.split('@')[0] : 'Guest User'),
       participantId: user?.id || `user_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 6)}`,
-      initialAudio: false,
-      initialVideo: false,
+      initialAudio: true,
+      initialVideo: true,
       selectedVideoDeviceId: undefined,
       selectedAudioDeviceId: undefined,
     };
@@ -733,8 +743,8 @@ export const MeetingRoomPage: React.FC<MeetingRoomPageProps> = ({ meetingId }) =
 
       {/* Center Stage & Dynamic Grid */}
       <div className="flex-1 flex overflow-hidden relative">
-        {/* Hidden Remote Audio Sinks - ensures continuous audio reception on mobile */}
-        <div className="hidden pointer-events-none" aria-hidden="true">
+        {/* Continuous Remote Audio Sinks - ensures continuous audio reception on mobile */}
+        <div className="fixed -top-full -left-full w-px h-px opacity-0 pointer-events-none" aria-hidden="true">
           {remotePeers.map((peer: RemotePeer) => (
             <audio
               key={`remote-audio-${peer.peerId}`}

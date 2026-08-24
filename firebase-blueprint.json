@@ -1,0 +1,155 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile with presence tracking",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "User identifier" },
+        "name": { "type": "string", "description": "Full name or display name" },
+        "email": { "type": "string", "format": "email", "description": "User email" },
+        "avatar": { "type": "string", "description": "Avatar photo URL" },
+        "isOnline": { "type": "boolean", "description": "Real-time online presence status" },
+        "lastSeen": { "type": "string", "format": "date-time", "description": "Timestamp of last activity" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "name", "email"]
+    },
+    "Contact": {
+      "title": "Contact",
+      "description": "User contact directory entry",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Owner of contact" },
+        "contactUserId": { "type": "string", "description": "Referenced real user UID if registered" },
+        "name": { "type": "string", "description": "Contact display name" },
+        "email": { "type": "string", "format": "email", "description": "Contact email" },
+        "avatar": { "type": "string", "description": "Contact avatar" },
+        "note": { "type": "string", "description": "Optional notes on contact" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "name", "email"]
+    },
+    "Conversation": {
+      "title": "Conversation",
+      "description": "1:1 user-to-user direct chat conversation",
+      "type": "object",
+      "properties": {
+        "participantIds": {
+          "type": "array",
+          "description": "Array of participant UIDs (2 users)"
+        },
+        "participants": {
+          "type": "object",
+          "description": "Map of participant metadata by UID"
+        },
+        "lastMessage": {
+          "type": "object",
+          "description": "Preview of the most recent message"
+        },
+        "unreadCounts": {
+          "type": "object",
+          "description": "Unread message count per participant UID"
+        },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["participantIds", "updatedAt"]
+    },
+    "DirectMessage": {
+      "title": "DirectMessage",
+      "description": "A message within a direct 1:1 conversation",
+      "type": "object",
+      "properties": {
+        "conversationId": { "type": "string" },
+        "senderId": { "type": "string" },
+        "senderName": { "type": "string" },
+        "senderEmail": { "type": "string" },
+        "text": { "type": "string" },
+        "read": { "type": "boolean" },
+        "meetingInvite": { "type": "object" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["senderId", "text", "createdAt"]
+    },
+    "Meeting": {
+      "title": "Meeting",
+      "description": "Video conference meeting document",
+      "type": "object",
+      "properties": {
+        "hostId": { "type": "string" },
+        "hostName": { "type": "string" },
+        "title": { "type": "string" },
+        "code": { "type": "string" },
+        "status": { "type": "string" },
+        "durationMinutes": { "type": "number" },
+        "participantCount": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["hostId", "title", "code", "status"]
+    },
+    "ActivityLog": {
+      "title": "ActivityLog",
+      "description": "System event activity log for administrative monitoring",
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "description": "Event type (user_registered, meeting_created, meeting_started, participant_joined, participant_left, meeting_completed, system_broadcast)" },
+        "title": { "type": "string", "description": "Brief description of event" },
+        "userId": { "type": "string", "description": "User identifier who triggered event" },
+        "userName": { "type": "string", "description": "User name" },
+        "userEmail": { "type": "string", "description": "User email" },
+        "meetingId": { "type": "string", "description": "Related meeting ID if applicable" },
+        "meetingCode": { "type": "string", "description": "Related meeting code" },
+        "details": { "type": "object", "description": "Additional event metadata" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["type", "title", "createdAt"]
+    },
+    "SystemSetting": {
+      "title": "SystemSetting",
+      "description": "Global application configuration and maintenance controls",
+      "type": "object",
+      "properties": {
+        "maintenanceMode": { "type": "boolean" },
+        "allowPublicRegistrations": { "type": "boolean" },
+        "maxMeetingDuration": { "type": "number" },
+        "maxParticipants": { "type": "number" },
+        "announcementBanner": { "type": "string" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "updatedBy": { "type": "string" }
+      },
+      "required": ["maintenanceMode"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Registered user profile and presence state"
+    },
+    "/contacts/{contactId}": {
+      "schema": "Contact",
+      "description": "User contact list"
+    },
+    "/conversations/{conversationId}": {
+      "schema": "Conversation",
+      "description": "Direct 1:1 messaging thread"
+    },
+    "/conversations/{conversationId}/messages/{messageId}": {
+      "schema": "DirectMessage",
+      "description": "Individual message in direct conversation"
+    },
+    "/meetings/{meetingId}": {
+      "schema": "Meeting",
+      "description": "Conferences & Video meetings"
+    },
+    "/activity_logs/{logId}": {
+      "schema": "ActivityLog",
+      "description": "Admin real-time platform event audit logs"
+    },
+    "/system_settings/{settingId}": {
+      "schema": "SystemSetting",
+      "description": "System settings and admin controls"
+    }
+  }
+}

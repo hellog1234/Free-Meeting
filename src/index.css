@@ -1,0 +1,40 @@
+@import "tailwindcss";
+
+@layer base {
+  html {
+    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    scroll-behavior: smooth;
+  }
+  
+  h1, h2, h3, h4, h5, h6 {
+    font-family: 'Outfit', 'Plus Jakarta Sans', sans-serif;
+    letter-spacing: -0.02em;
+  }
+}
+
+@keyframes floatUpAndFade {
+  0% {
+    opacity: 0;
+    transform: translateY(20px) scale(0.6);
+  }
+  15% {
+    opacity: 1;
+    transform: translateY(0px) scale(1.15);
+  }
+  30% {
+    transform: translateY(-40px) scale(1);
+  }
+  70% {
+    opacity: 0.95;
+    transform: translateY(-160px) scale(1.05);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-280px) scale(0.8);
+  }
+}
+
+.animate-float-reaction {
+  animation: floatUpAndFade 3.5s cubic-bezier(0.25, 1, 0.5, 1) forwards;
+}
+

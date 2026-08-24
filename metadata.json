@@ -1,0 +1,13 @@
+{
+  "name": "FreeMeet",
+  "description": "100% free browser-based video meeting platform. Meet, talk, and collaborate directly from your browser with no subscriptions or complicated setup.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone",
+    "display-capture",
+    "screen-wake-lock"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

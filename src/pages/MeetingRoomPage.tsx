@@ -171,6 +171,8 @@ export const MeetingRoomPage: React.FC<MeetingRoomPageProps> = ({ meetingId }) =
     forceMutedNotice,
     localAudioLevel,
     mediaError,
+    audioAutoplayBlocked,
+    setAudioAutoplayBlocked,
     toggleCamera,
     toggleMic,
     toggleScreenShare,
@@ -188,6 +190,34 @@ export const MeetingRoomPage: React.FC<MeetingRoomPageProps> = ({ meetingId }) =
     selectedVideoDeviceId,
     selectedAudioDeviceId,
   });
+
+  // Mobile Audio Unlock on User Interaction
+  const handleUnlockAudio = React.useCallback(() => {
+    console.log('[MOBILE MEDIA] Unlocking audio on user gesture');
+    const audioEls = document.querySelectorAll('audio');
+    audioEls.forEach(el => {
+      el.play().catch(e => console.warn('Audio play error on gesture:', e));
+    });
+    const videoEls = document.querySelectorAll('video');
+    videoEls.forEach(el => {
+      el.play().catch(e => console.warn('Video play error on gesture:', e));
+    });
+    setAudioAutoplayBlocked(false);
+  }, [setAudioAutoplayBlocked]);
+
+  // Global listener to unlock audio on first touch/click when autoplay blocked
+  useEffect(() => {
+    if (!audioAutoplayBlocked) return;
+    const onUserGesture = () => {
+      handleUnlockAudio();
+    };
+    window.addEventListener('click', onUserGesture, { once: true });
+    window.addEventListener('touchstart', onUserGesture, { once: true });
+    return () => {
+      window.removeEventListener('click', onUserGesture);
+      window.removeEventListener('touchstart', onUserGesture);
+    };
+  }, [audioAutoplayBlocked, handleUnlockAudio]);
 
   // System & Browser Permissions Hook
   const {
@@ -703,6 +733,50 @@ export const MeetingRoomPage: React.FC<MeetingRoomPageProps> = ({ meetingId }) =
 
       {/* Center Stage & Dynamic Grid */}
       <div className="flex-1 flex overflow-hidden relative">
+        {/* Hidden Remote Audio Sinks - ensures continuous audio reception on mobile */}
+        <div className="hidden pointer-events-none" aria-hidden="true">
+          {remotePeers.map((peer: RemotePeer) => (
+            <audio
+              key={`remote-audio-${peer.peerId}`}
+              autoPlay
+              playsInline
+              ref={el => {
+                if (el && peer.stream) {
+                  if (el.srcObject !== peer.stream) {
+                    el.srcObject = peer.stream;
+                  }
+                  el.play().catch(err => {
+                    console.log('[WEBRTC] remote audio autoplay blocked:', err);
+                    setAudioAutoplayBlocked(true);
+                  });
+                }
+              }}
+            />
+          ))}
+        </div>
+
+        {/* Tap to Enable Meeting Audio Banner (Mobile Autoplay Policy Unlock) */}
+        {audioAutoplayBlocked && (
+          <div 
+            onClick={handleUnlockAudio}
+            className="absolute top-4 inset-x-4 z-50 max-w-md mx-auto bg-[#528d5a] text-white px-4 py-3 rounded-2xl text-xs font-bold flex items-center justify-between shadow-2xl border border-white/20 animate-bounce cursor-pointer"
+          >
+            <div className="flex items-center gap-2.5">
+              <Volume2 className="w-5 h-5 animate-pulse text-white shrink-0" />
+              <div>
+                <p className="leading-snug">Tap to enable meeting audio</p>
+                <p className="text-[10px] text-white/80 font-normal">Browser blocked automatic audio playback</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              className="px-3.5 py-1.5 bg-white text-[#162017] rounded-xl font-extrabold text-xs shadow-sm hover:bg-white/90 shrink-0 ml-2 cursor-pointer"
+            >
+              Enable Audio
+            </button>
+          </div>
+        )}
+
         {/* Real Participant Video Grid */}
         <main className="flex-1 flex items-center justify-center overflow-hidden relative">
           {mediaError && !dismissedMediaError && (

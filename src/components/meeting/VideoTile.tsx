@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Mic, MicOff, VideoOff, Maximize2, Pin, PinOff, WifiOff, Loader2 } from 'lucide-react';
+import { Mic, MicOff, VideoOff, Pin, PinOff, WifiOff, Loader2 } from 'lucide-react';
 
 interface VideoTileProps {
   stream: MediaStream | null;
@@ -41,9 +41,11 @@ export const VideoTile: React.FC<VideoTileProps> = ({
     if (!videoEl) return;
 
     if (stream) {
-      videoEl.srcObject = stream;
+      if (videoEl.srcObject !== stream) {
+        videoEl.srcObject = stream;
+      }
       videoEl.play().catch(err => {
-        console.warn('[VideoTile] Autoplay error (non-fatal):', err);
+        console.warn('[VideoTile] Autoplay non-fatal notice:', err);
       });
 
       const checkTracks = () => {
@@ -54,7 +56,6 @@ export const VideoTile: React.FC<VideoTileProps> = ({
 
       checkTracks();
 
-      // Listen to track changes
       stream.onaddtrack = checkTracks;
       stream.onremovetrack = checkTracks;
     } else {
@@ -85,15 +86,15 @@ export const VideoTile: React.FC<VideoTileProps> = ({
           : 'border-[#2b3d2d] hover:border-[#3d573f]'
       }`}
     >
-      {/* Real HTML5 Video Element */}
+      {/* Real HTML5 Video Element - Always kept in DOM without display:none so audio doesn't get suspended on mobile */}
       <video
         ref={videoRef}
         autoPlay
         playsInline
         muted={isLocal}
-        className={`w-full h-full object-cover transition-opacity duration-300 ${
+        className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-300 ${
           (isMirrored !== undefined ? isMirrored : isLocal) ? 'transform -scale-x-100' : ''
-        } ${showVideo ? 'opacity-100 block' : 'opacity-0 hidden'}`}
+        } ${showVideo ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}
       />
 
       {/* Avatar Fallback when Camera is Off */}
